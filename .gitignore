@@ -1,0 +1,16 @@
+# Secrets — never commit real keys. Templates (.env.example) are fine.
+.env
+.env.*
+!.env.example
+
+# Dependencies and builds
+node_modules/
+dist/
+
+# Logs and OS / editor files
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
