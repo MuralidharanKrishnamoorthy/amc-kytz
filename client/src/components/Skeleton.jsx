@@ -64,6 +64,52 @@ export function TableSkeleton({ label, rows = 10, columns = 7 }) {
   );
 }
 
+/** Website detail page: header, Contract + Renewal cards, assets table. */
+export function DetailSkeleton() {
+  return (
+    <Loading label="Loading website">
+      <Skeleton width={220} height={12} className="skeleton-legend" />
+      <div className="detail-header">
+        <Skeleton width={320} height={30} />
+        <Skeleton width={380} height={14} className="skeleton-gap" />
+      </div>
+      <div className="detail-grid">
+        <div className="card panel">
+          <Skeleton width={120} height={20} className="skeleton-legend" />
+          <div className="details">
+            {Array.from({ length: 6 }, (_, i) => (
+              <div key={i} className="detail">
+                <Skeleton width="50%" height={11} />
+                <Skeleton width="85%" className="skeleton-gap-sm" />
+              </div>
+            ))}
+          </div>
+          <div className="skeleton-tags">
+            {[130, 110, 150, 90].map((w) => (
+              <Skeleton key={w} width={w} height={24} />
+            ))}
+          </div>
+        </div>
+        <div className="card panel">
+          <Skeleton width={110} height={20} className="skeleton-legend" />
+          <Skeleton height={14} className="skeleton-gap-sm" />
+          <Skeleton height={14} className="skeleton-gap-sm" />
+        </div>
+      </div>
+      <div className="card panel">
+        <Skeleton width={200} height={20} className="skeleton-legend" />
+        {Array.from({ length: 4 }, (_, r) => (
+          <div key={r} className="skeleton-row">
+            {[16, 22, 14, 16, 8].map((w, c) => (
+              <Skeleton key={c} width={`${w}%`} />
+            ))}
+          </div>
+        ))}
+      </div>
+    </Loading>
+  );
+}
+
 // Field counts per section mirror the real form so nothing jumps on load.
 const FORM_SECTIONS = [
   { columns: 3, fields: 7 },

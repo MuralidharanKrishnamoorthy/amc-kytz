@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { formatDate, formatRupees } from '../lib/format.js';
 import DaysLeft from '../components/DaysLeft.jsx';
+import { DetailSkeleton } from '../components/Skeleton.jsx';
 
 const CONTENT_UPDATES = 'Content updates';
 
@@ -260,7 +261,7 @@ export default function SiteDetail() {
       </>
     );
   }
-  if (!data) return <p className="muted">Loading…</p>;
+  if (!data) return <DetailSkeleton />;
 
   const { site, client, contract } = data;
   const badge = contract && STATUS_BADGE[contract.status];

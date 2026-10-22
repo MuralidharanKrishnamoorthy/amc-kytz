@@ -857,6 +857,36 @@ p > .skeleton {
   border-bottom: 0;
 }
 
+.skeleton-gap-sm {
+  margin-top: 8px;
+}
+
+.skeleton-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 22px;
+}
+
+/* Busy indicator inside buttons. */
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 8px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  vertical-align: -2px;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes shimmer {
   from {
     background-position: 200% 0;
@@ -869,6 +899,10 @@ p > .skeleton {
 @media (prefers-reduced-motion: reduce) {
   .skeleton {
     animation: none;
+  }
+
+  .spinner {
+    animation-duration: 1.5s;
   }
 }
 

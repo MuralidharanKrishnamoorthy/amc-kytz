@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { Checkbox, Field, RowErrors, Select, TextInput } from '../components/FormControls.jsx';
 import { FormSkeleton } from '../components/Skeleton.jsx';
+import Spinner from '../components/Spinner.jsx';
 
 const INITIAL_ASSET_ROWS = 1;
 const INITIAL_ACCESS_ROWS = 2;
@@ -570,7 +571,13 @@ export default function NewAmc() {
           Cancel
         </Link>
         <button type="submit" className="btn btn-primary" disabled={saving}>
-          {saving ? 'Saving…' : 'Save AMC'}
+          {saving ? (
+            <>
+              <Spinner /> Saving
+            </>
+          ) : (
+            'Save AMC'
+          )}
         </button>
       </div>
     </form>
