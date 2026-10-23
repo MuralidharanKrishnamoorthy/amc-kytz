@@ -5,14 +5,14 @@ React (Vite) dashboard + Node/Express API + Supabase (Postgres + Storage).
 ```
 client/    React app (dashboard, New AMC form)
 server/    Express API (validation, Supabase access)
-supabase/  schema.sql — tables, create_amc() function, storage bucket
+supabase/  schema.sql — tables, create_amc() / update_amc() functions, storage bucket
 ```
 
 ## Setup
 
 1. **Database** — in the Supabase dashboard open *SQL Editor*, paste
-   `supabase/schema.sql` and run it. (If you ran the first draft of the
-   schema earlier, run `supabase/drop_previous_draft.sql` first.)
+   `supabase/schema.sql` and run it. It creates every table, dropdown list,
+   the `create_amc()` / `update_amc()` functions and the storage bucket.
 2. **API**
    ```bash
    cd server
