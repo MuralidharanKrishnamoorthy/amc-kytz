@@ -1,4 +1,6 @@
-const BASE_URL = import.meta.env.VITE_API_URL ?? '';
+// API address from client/.env (VITE_API_URL), e.g. http://localhost:4000.
+// A trailing slash is ignored so "https://api.example.com/" also works.
+const BASE_URL = (import.meta.env.VITE_API_URL ?? '').replace(/\/+$/, '');
 
 export class ApiError extends Error {
   constructor(message, status, fields) {

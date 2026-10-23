@@ -64,6 +64,35 @@ only accepts values that exist there. No code change is needed.
 - Signed agreements (PDF/PNG/JPG, max 10 MB) go to the private `agreements`
   storage bucket.
 
+## Environment variables
+
+Each app has its own `.env` (both are git-ignored; copy the `.env.example`
+next to it).
+
+| App | File | Variables |
+| --- | --- | --- |
+| API | `server/.env` | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (secret), `PORT`, `CORS_ORIGIN`, `APP_TIMEZONE` |
+| Client | `client/.env` | `VITE_API_URL`: the API address, e.g. `http://localhost:4000` (public, not a secret) |
+
+The service-role key must stay on the server: anything the client reads is
+shipped to the browser.
+
+## Deployment (Coolify)
+
+Create two resources from this repository:
+
+1. **API**: base directory `/server`, Nixpacks, start command `npm start`,
+   port `4000`, health check `/api/health`. Add the server variables in the
+   Environment tab and set `CORS_ORIGIN` to the client's domain.
+2. **Client**: base directory `/client`, static build, build command
+   `npm run build`, publish directory `dist`, SPA mode on. Add `VITE_API_URL`
+   (the API's domain) as a **build variable**.
+
+`npm start` reads `server/.env` when it exists and otherwise uses the
+environment variables Coolify provides.
+
+> The app has no login yet: anyone with the URL can read and change data.
+
 ## Production build
 
 ```bash
