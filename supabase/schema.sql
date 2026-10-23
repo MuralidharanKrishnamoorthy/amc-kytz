@@ -358,7 +358,7 @@ insert into platforms (name, sort_order) values
 on conflict (name) do nothing;
 
 insert into plans (name, sort_order) values
-  ('Standard', 1)
+  ('Plan A', 1), ('Plan B', 2), ('Plan C', 3)
 on conflict (name) do nothing;
 
 insert into critical_response_times (name, sort_order) values

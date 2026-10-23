@@ -36,7 +36,7 @@ function toItems(sites, todayIso) {
         ...base,
         id: `contract:${contract.id}`,
         kind: AMC_KIND,
-        detail: `${contract.plan} plan`,
+        detail: contract.plan,
         expiry: contract.end_date,
         daysLeft: daysBetween(todayIso, contract.end_date),
         autoRenew: null,
