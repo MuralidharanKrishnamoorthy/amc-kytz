@@ -709,7 +709,103 @@ a {
 }
 
 .detail-header {
-  margin-bottom: 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.btn-secondary:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* Section tabs on the website page. */
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border-strong);
+  overflow-x: auto;
+}
+
+.tab {
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab-active {
+  border-bottom-color: var(--primary);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Overview: main column + narrow right column. */
+.detail-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 20px;
+  align-items: start;
+}
+
+.detail-col {
+  min-width: 0;
+}
+
+.hours {
+  margin-top: 20px;
+}
+
+.hours-head {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.detail-label-inline {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.progress {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+}
+
+.empty-sm {
+  padding: 12px 0 4px;
+  text-align: left;
+}
+
+.card-foot {
+  margin: 10px 0 0;
 }
 
 .detail-title {
@@ -794,6 +890,22 @@ a {
 .rows-dl dd {
   margin: 0;
   text-align: right;
+}
+
+.note-box {
+  margin: 12px 0 14px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 0.9rem;
+}
+
+.btn-block {
+  width: 100%;
+}
+
+.btn-primary:disabled {
+  cursor: not-allowed;
 }
 
 .expiry {
@@ -945,6 +1057,7 @@ p > .skeleton {
   }
 
   .detail-grid,
+  .detail-layout,
   .grid-3,
   .grid-4,
   .check-grid,

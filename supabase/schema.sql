@@ -413,6 +413,55 @@ insert into reminder_channels (name, sort_order) values
 on conflict (name) do nothing;
 
 -- ---------------------------------------------------------------------------
+-- Health and renewals (filled later from monitoring and the renewal workflow)
+-- ---------------------------------------------------------------------------
+
+-- Renewal stages (master list). Matches the design's renewal pipeline.
+create table if not exists public.renewal_statuses (
+  name       text primary key,
+  sort_order smallint not null default 0
+);
+
+insert into public.renewal_statuses (name, sort_order) values
+  ('Quote not sent', 1), ('Quote sent', 2), ('Negotiating', 3), ('Renewed', 4), ('Lost', 5)
+on conflict (name) do nothing;
+
+-- One renewal per contract: Renewal card → Status, Proposed fee, Upsell notes.
+create table if not exists public.renewals (
+  id            uuid primary key default gen_random_uuid(),
+  contract_id   uuid not null unique references public.contracts (id) on delete cascade,
+  status        text not null default 'Quote not sent'
+                  references public.renewal_statuses (name) on update cascade,
+  -- Agreed / quoted fee; when empty the page shows the formula
+  -- annual fee × (1 + renewal increase %).
+  proposed_fee  numeric(12,2) check (proposed_fee >= 0),
+  upsell_notes  text,
+  quote_sent_on date,
+  closed_on     date,
+  lost_reason   text
+);
+
+-- Latest health snapshot per website: Health card, "Site down" badge and the
+-- WordPress / PHP versions in the page header.
+create table if not exists public.site_health (
+  site_id              uuid primary key references public.sites (id) on delete cascade,
+  is_up                boolean,
+  down_since           timestamptz,
+  uptime_30d_pct       numeric(5,2) check (uptime_30d_pct between 0 and 100),
+  last_backup_at       timestamptz,
+  last_restore_test_on date,
+  security_scan_result text,
+  security_scan_on     date,
+  mobile_speed_score   smallint check (mobile_speed_score between 0 and 100),
+  cms_version          text,
+  php_version          text
+);
+
+alter table public.renewal_statuses enable row level security;
+alter table public.renewals         enable row level security;
+alter table public.site_health      enable row level security;
+
+-- ---------------------------------------------------------------------------
 -- Storage bucket for signed agreements (private).
 -- ---------------------------------------------------------------------------
 

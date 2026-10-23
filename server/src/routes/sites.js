@@ -36,6 +36,20 @@ function pickCurrent(contracts) {
   );
 }
 
+// PostgREST code for a table that doesn't exist (migration not run yet).
+const TABLE_MISSING = 'PGRST205';
+
+/**
+ * Row from a table that may not exist yet (site_health, renewals): null when
+ * there is no row or the table hasn't been created, so the page still loads.
+ */
+async function optionalRow(query) {
+  const { data, error } = await query;
+  if (error?.code === TABLE_MISSING) return null;
+  if (error) throw error;
+  return data;
+}
+
 /**
  * List status for a website, from its featured contract:
  * expiring = running and ends within 30 days.
@@ -132,6 +146,12 @@ router.get('/:id', async (req, res) => {
     .sort((a, b) => b.end_date.localeCompare(a.end_date));
 
   const current = pickCurrent(contracts);
+  const [health, renewal] = await Promise.all([
+    optionalRow(supabase.from('site_health').select('*').eq('site_id', site.id).maybeSingle()),
+    current
+      ? optionalRow(supabase.from('renewals').select('*').eq('contract_id', current.id).maybeSingle())
+      : null,
+  ]);
 
   res.json({
     today: todayIso,
@@ -141,6 +161,8 @@ router.get('/:id', async (req, res) => {
       host: hostOf(site.website_url),
       platform: site.platform,
     },
+    health,
+    renewal,
     client: site.client,
     contract: current,
     otherContracts: contracts.filter((c) => c !== current),
