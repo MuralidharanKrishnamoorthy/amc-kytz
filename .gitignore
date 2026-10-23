@@ -14,6 +14,3 @@ npm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
-
-# Database migrations are kept locally only
-supabase/migrations/
