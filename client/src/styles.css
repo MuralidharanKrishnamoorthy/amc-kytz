@@ -588,6 +588,87 @@ a {
   gap: 14px 18px;
 }
 
+/* Scope checkboxes grouped by frequency. */
+.check-group {
+  font-weight: 600;
+}
+
+.check-group .muted {
+  font-weight: 400;
+}
+
+/* Frequency dropdown: chevron + group checkbox, items under category headings. */
+.scope-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.scope-group + .scope-group {
+  margin-top: 10px;
+}
+
+.scope-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.scope-toggle {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.scope-toggle:hover {
+  background: var(--bg);
+}
+
+.scope-toggle-open {
+  transform: rotate(90deg);
+}
+
+.scope-body {
+  margin: 10px 0 4px 36px;
+}
+
+.scope-chips {
+  margin-bottom: 12px;
+}
+
+.chip-sm {
+  padding: 4px 12px;
+  font-size: 0.85rem;
+}
+
+.scope-category + .scope-category {
+  margin-top: 14px;
+}
+
+.scope-category-name {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.scope-groups {
+  display: grid;
+  gap: 12px;
+}
+
+.scope-group-name {
+  margin: 0 0 6px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
 .check-row {
   display: flex;
   flex-wrap: wrap;
@@ -892,6 +973,31 @@ a {
   text-align: right;
 }
 
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.saved-file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0 0;
+}
+
+/* A button that looks like a link (secondary inline actions). */
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--primary);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .note-box {
   margin: 12px 0 14px;
   padding: 12px 14px;
@@ -931,6 +1037,70 @@ a {
 
 .small {
   font-size: 0.85rem;
+}
+
+/* Snackbar: short confirmation at the bottom of the screen. */
+.snackbar {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 260px;
+  max-width: calc(100vw - 32px);
+  padding: 12px 12px 12px 16px;
+  border-radius: 10px;
+  background: #1f2937;
+  color: #fff;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.2);
+  transform: translateX(-50%);
+  animation: snackbar-in 0.25s ease-out;
+}
+
+.snackbar-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #22c55e;
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.snackbar-close {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: #d1d5db;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.snackbar-close:hover {
+  color: #fff;
+}
+
+@keyframes snackbar-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 16px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .snackbar {
+    animation: none;
+  }
 }
 
 /* Loading skeletons ------------------------------------------------------- */

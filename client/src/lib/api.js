@@ -38,6 +38,14 @@ export const api = {
   getSite: (id, signal) => request(`/api/sites/${encodeURIComponent(id)}`, { signal }),
   agreementUrl: (siteId, contractId) =>
     `${BASE_URL}/api/sites/${encodeURIComponent(siteId)}/contracts/${encodeURIComponent(contractId)}/agreement`,
+  getAmc: (id, signal) => request(`/api/amcs/${encodeURIComponent(id)}`, { signal }),
+  updateAmc: (id, payload, agreementFile, removeAgreement) => {
+    const form = new FormData();
+    form.append('data', JSON.stringify(payload));
+    if (agreementFile) form.append('agreement', agreementFile);
+    if (removeAgreement) form.append('remove_agreement', 'true');
+    return request(`/api/amcs/${encodeURIComponent(id)}`, { method: 'PUT', body: form });
+  },
   createAmc: (payload, agreementFile) => {
     const form = new FormData();
     form.append('data', JSON.stringify(payload));

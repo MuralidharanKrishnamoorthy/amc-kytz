@@ -90,6 +90,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/amcs/new" element={<NewAmc />} />
+          <Route path="/amcs/:id/edit" element={<NewAmc />} />
           <Route path="/clients" element={<Clients />} />
           <Route path="/sites/:id" element={<SiteDetail />} />
           <Route path="*" element={<p className="muted">Page not found.</p>} />

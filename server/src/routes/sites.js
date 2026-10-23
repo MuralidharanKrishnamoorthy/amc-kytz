@@ -3,6 +3,7 @@ import { config } from '../config.js';
 import { supabase } from '../supabase.js';
 import { HttpError } from '../lib/http-error.js';
 import { today, daysBetween } from '../lib/dates.js';
+import { getOptions } from '../options.js';
 
 const router = Router();
 
@@ -36,8 +37,28 @@ function pickCurrent(contracts) {
   );
 }
 
-// PostgREST code for a table that doesn't exist (migration not run yet).
+// PostgREST / Postgres codes for a table or column that doesn't exist yet.
 const TABLE_MISSING = 'PGRST205';
+const COLUMN_MISSING = '42703';
+
+/**
+ * Contract scope grouped by frequency, in the order of scopeFrequencies:
+ * [{ frequency: 'Monthly Once', items: ['Content Updates', …] }, …].
+ * Items without a frequency go last, with frequency null. Rows must already
+ * be sorted by sort_order.
+ */
+function groupScope(scopeItems, scopeFrequencies) {
+  const frequencyOf = (row) => row.item?.frequency ?? null;
+  const groups = scopeFrequencies
+    .map((frequency) => ({
+      frequency,
+      items: scopeItems.filter((row) => frequencyOf(row) === frequency).map((row) => row.scope_item),
+    }))
+    .filter((group) => group.items.length);
+  const rest = scopeItems.filter((row) => !scopeFrequencies.includes(frequencyOf(row)));
+  if (rest.length) groups.push({ frequency: null, items: rest.map((row) => row.scope_item) });
+  return groups;
+}
 
 /**
  * Row from a table that may not exist yet (site_health, renewals): null when
@@ -78,7 +99,9 @@ router.get('/', async (_req, res) => {
       .sort((a, b) => b.end_date.localeCompare(a.end_date));
     const current = pickCurrent(contracts);
     // Soonest asset expiry; an already-expired one comes first and needs attention.
-    const next = [...site.assets].sort((a, b) => a.expiry_date.localeCompare(b.expiry_date))[0];
+    const next = site.assets
+      .filter((a) => a.expiry_date)
+      .sort((a, b) => a.expiry_date.localeCompare(b.expiry_date))[0];
 
     return {
       id: site.id,
@@ -108,26 +131,31 @@ router.get('/', async (_req, res) => {
 router.get('/:id', async (req, res) => {
   if (!UUID.test(req.params.id)) throw new HttpError(404, 'Website not found');
 
-  const { data: site, error } = await supabase
-    .from('sites')
-    .select(`
-      id, website_url, platform,
-      client:clients ( name, contact_person, phone ),
-      contracts (
-        id, plan, start_date, end_date, hours_quota, critical_response, normal_response,
-        content_updates_per_month, exclusions, agreement_path, annual_fee, gst_rate,
-        billing_cycle, renewal_increase_pct,
-        contract_scope_items ( scope_item, item:scope_items ( sort_order ) )
-      ),
-      assets ( id, asset_type, provider, owned_by, expiry_date, auto_renew, type:asset_types ( sort_order ) ),
-      access_refs ( id, account_type, login, vault_url, two_fa_held_by, account:account_types ( sort_order ) )
-    `)
-    .eq('id', req.params.id)
-    .maybeSingle();
+  const siteQuery = (scopeItemColumns) =>
+    supabase
+      .from('sites')
+      .select(`
+        id, website_url, platform,
+        client:clients ( name, contact_person, phone ),
+        contracts (
+          id, plan, start_date, end_date, hours_quota, critical_response, normal_response,
+          content_updates_per_month, exclusions, agreement_path, annual_fee, gst_rate,
+          billing_cycle, renewal_increase_pct,
+          contract_scope_items ( scope_item, item:scope_items ( ${scopeItemColumns} ) )
+        ),
+        assets ( id, asset_type, provider, owned_by, expiry_date, auto_renew, type:asset_types ( sort_order ) ),
+        access_refs ( id, account_type, login, vault_url, two_fa_held_by, account:account_types ( sort_order ) )
+      `)
+      .eq('id', req.params.id)
+      .maybeSingle();
 
+  let { data: site, error } = await siteQuery('sort_order, frequency');
+  // scope_items.frequency comes from a migration that may not have run yet.
+  if (error?.code === COLUMN_MISSING) ({ data: site, error } = await siteQuery('sort_order'));
   if (error) throw error;
   if (!site) throw new HttpError(404, 'Website not found');
 
+  const { scopeFrequencies } = await getOptions();
   const todayIso = today();
   const bySortOrder = (key) => (a, b) => (a[key]?.sort_order ?? 0) - (b[key]?.sort_order ?? 0);
 
@@ -139,6 +167,7 @@ router.get('/:id', async (req, res) => {
       hours_quota: c.hours_quota === null ? null : Number(c.hours_quota),
       renewal_increase_pct: c.renewal_increase_pct === null ? null : Number(c.renewal_increase_pct),
       scope: scopeItems.sort(bySortOrder('item')).map((s) => s.scope_item),
+      scopeGroups: groupScope(scopeItems, scopeFrequencies),
       hasAgreement: Boolean(agreementPath),
       status: contractStatus(c, todayIso),
       daysLeft: daysBetween(todayIso, c.end_date),
@@ -167,8 +196,11 @@ router.get('/:id', async (req, res) => {
     contract: current,
     otherContracts: contracts.filter((c) => c !== current),
     assets: site.assets
-      .sort((a, b) => bySortOrder('type')(a, b) || a.expiry_date.localeCompare(b.expiry_date))
-      .map(({ type: _type, ...a }) => ({ ...a, daysLeft: daysBetween(todayIso, a.expiry_date) })),
+      .sort((a, b) => bySortOrder('type')(a, b) || (a.expiry_date ?? '9999').localeCompare(b.expiry_date ?? '9999'))
+      .map(({ type: _type, ...a }) => ({
+        ...a,
+        daysLeft: a.expiry_date ? daysBetween(todayIso, a.expiry_date) : null,
+      })),
     accessRefs: site.access_refs
       .sort(bySortOrder('account'))
       .map(({ account: _account, ...r }) => r),

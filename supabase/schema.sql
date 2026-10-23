@@ -44,8 +44,32 @@ create table if not exists public.billing_cycles (
   sort_order smallint not null default 0
 );
 
+create table if not exists public.renewal_increase_rates (
+  pct        numeric(5,2) primary key check (pct between 0 and 100),
+  sort_order smallint not null default 0
+);
+
+create table if not exists public.out_of_scope_rates (
+  rate       numeric(10,2) primary key check (rate >= 0),
+  sort_order smallint not null default 0
+);
+
+-- How often a scope item is done; the form groups the checkboxes by this.
+create table if not exists public.scope_frequencies (
+  name       text primary key,
+  sort_order smallint not null default 0
+);
+
+-- The sheet's headings; items are listed under them inside each frequency.
+create table if not exists public.scope_categories (
+  name       text primary key,
+  sort_order smallint not null default 0
+);
+
 create table if not exists public.scope_items (
   name       text primary key,
+  frequency  text references public.scope_frequencies (name) on update cascade,
+  category   text references public.scope_categories (name) on update cascade,
   sort_order smallint not null default 0
 );
 
@@ -126,8 +150,8 @@ create table if not exists public.contracts (
   annual_fee                numeric(12,2) not null check (annual_fee >= 0),
   gst_rate                  numeric(5,2) not null references public.gst_rates (rate) on update cascade,
   billing_cycle             text not null references public.billing_cycles (name) on update cascade,
-  renewal_increase_pct      numeric(5,2) check (renewal_increase_pct between 0 and 100),
-  out_of_scope_rate         numeric(10,2) check (out_of_scope_rate >= 0),
+  renewal_increase_pct      numeric(5,2) references public.renewal_increase_rates (pct) on update cascade,
+  out_of_scope_rate         numeric(10,2) references public.out_of_scope_rates (rate) on update cascade,
   -- 3 · "Create recurring invoices in Zoho Books automatically"
   zoho_recurring            boolean not null default false,
   notify_client             boolean not null default false,
@@ -167,8 +191,9 @@ create table if not exists public.assets (
   site_id     uuid not null references public.sites (id) on delete cascade,
   asset_type  text not null references public.asset_types (name) on update cascade,
   provider    text,
-  owned_by    text not null references public.parties (name) on update cascade,
-  expiry_date date not null,
+  -- Owner and expiry are optional (e.g. hosting known only by its provider).
+  owned_by    text references public.parties (name) on update cascade,
+  expiry_date date,
   auto_renew  boolean not null default false
 );
 
@@ -202,6 +227,10 @@ alter table public.critical_response_times    enable row level security;
 alter table public.normal_response_times      enable row level security;
 alter table public.gst_rates                  enable row level security;
 alter table public.billing_cycles             enable row level security;
+alter table public.renewal_increase_rates     enable row level security;
+alter table public.out_of_scope_rates         enable row level security;
+alter table public.scope_frequencies          enable row level security;
+alter table public.scope_categories           enable row level security;
 alter table public.scope_items                enable row level security;
 alter table public.asset_types                enable row level security;
 alter table public.parties                    enable row level security;
@@ -348,6 +377,128 @@ revoke all on function public.create_amc(jsonb) from public, anon, authenticated
 grant execute on function public.create_amc(jsonb) to service_role;
 
 -- ---------------------------------------------------------------------------
+-- update_amc: edits an existing AMC — its client, website, contract (with
+-- scope and reminders), and the website's domain/hosting and access rows —
+-- in one transaction. List rows are replaced with exactly what the form
+-- sent. Returns the contract id.
+-- Raises (hint): contract_not_found, client_name_taken, site_url_taken.
+-- ---------------------------------------------------------------------------
+
+create or replace function public.update_amc(p_contract_id uuid, payload jsonb)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  c           jsonb := payload -> 'client';
+  s           jsonb := payload -> 'site';
+  k           jsonb := payload -> 'contract';
+  v_site_id   uuid;
+  v_client_id uuid;
+begin
+  select ct.site_id, st.client_id into v_site_id, v_client_id
+  from contracts ct join sites st on st.id = ct.site_id
+  where ct.id = p_contract_id
+  for update of ct, st;
+
+  if v_site_id is null then
+    raise exception 'AMC not found' using errcode = 'P0001', hint = 'contract_not_found';
+  end if;
+
+  -- Client: renaming to another client's name would merge two clients; refuse.
+  if exists (
+    select 1 from clients
+    where lower(name) = lower(trim(c ->> 'name')) and id <> v_client_id
+  ) then
+    raise exception 'Another client already has this name'
+      using errcode = 'P0001', hint = 'client_name_taken';
+  end if;
+
+  update clients set
+    name           = trim(c ->> 'name'),
+    gstin          = nullif(c ->> 'gstin', ''),
+    contact_person = nullif(c ->> 'contact_person', ''),
+    email          = nullif(c ->> 'email', ''),
+    phone          = nullif(c ->> 'phone', '')
+  where id = v_client_id;
+
+  -- Website: a URL can belong to one website only.
+  if exists (
+    select 1 from sites
+    where lower(website_url) = lower(s ->> 'website_url') and id <> v_site_id
+  ) then
+    raise exception 'Website is registered to another AMC'
+      using errcode = 'P0001', hint = 'site_url_taken';
+  end if;
+
+  update sites set
+    website_url              = s ->> 'website_url',
+    platform                 = s ->> 'platform',
+    password_rotation_months = (s ->> 'password_rotation_months')::smallint
+  where id = v_site_id;
+
+  update contracts set
+    plan                      = k ->> 'plan',
+    start_date                = (k ->> 'start_date')::date,
+    end_date                  = (k ->> 'end_date')::date,
+    hours_quota               = (k ->> 'hours_quota')::numeric,
+    critical_response         = k ->> 'critical_response',
+    normal_response           = k ->> 'normal_response',
+    content_updates_per_month = (k ->> 'content_updates_per_month')::integer,
+    exclusions                = nullif(k ->> 'exclusions', ''),
+    agreement_path            = nullif(k ->> 'agreement_path', ''),
+    annual_fee                = (k ->> 'annual_fee')::numeric,
+    gst_rate                  = (k ->> 'gst_rate')::numeric,
+    billing_cycle             = k ->> 'billing_cycle',
+    renewal_increase_pct      = (k ->> 'renewal_increase_pct')::numeric,
+    out_of_scope_rate         = (k ->> 'out_of_scope_rate')::numeric,
+    zoho_recurring            = coalesce((k ->> 'zoho_recurring')::boolean, false),
+    notify_client             = coalesce((k ->> 'notify_client')::boolean, false)
+  where id = p_contract_id;
+
+  delete from contract_scope_items where contract_id = p_contract_id;
+  insert into contract_scope_items (contract_id, scope_item)
+  select p_contract_id, value
+  from jsonb_array_elements_text(coalesce(k -> 'scope', '[]'::jsonb));
+
+  delete from contract_reminder_offsets where contract_id = p_contract_id;
+  insert into contract_reminder_offsets (contract_id, days)
+  select p_contract_id, value::smallint
+  from jsonb_array_elements_text(coalesce(k -> 'reminder_days', '[]'::jsonb));
+
+  delete from contract_reminder_channels where contract_id = p_contract_id;
+  insert into contract_reminder_channels (contract_id, channel)
+  select p_contract_id, value
+  from jsonb_array_elements_text(coalesce(k -> 'reminder_channels', '[]'::jsonb));
+
+  delete from assets where site_id = v_site_id;
+  insert into assets (site_id, asset_type, provider, owned_by, expiry_date, auto_renew)
+  select v_site_id,
+         a ->> 'asset_type',
+         nullif(a ->> 'provider', ''),
+         nullif(a ->> 'owned_by', ''),
+         (a ->> 'expiry_date')::date,
+         coalesce((a ->> 'auto_renew')::boolean, false)
+  from jsonb_array_elements(coalesce(payload -> 'assets', '[]'::jsonb)) a;
+
+  delete from access_refs where site_id = v_site_id;
+  insert into access_refs (site_id, account_type, login, vault_url, two_fa_held_by)
+  select v_site_id,
+         r ->> 'account_type',
+         nullif(r ->> 'login', ''),
+         nullif(r ->> 'vault_url', ''),
+         nullif(r ->> 'two_fa_held_by', '')
+  from jsonb_array_elements(coalesce(payload -> 'access_refs', '[]'::jsonb)) r;
+
+  return p_contract_id;
+end;
+$$;
+
+revoke all on function public.update_amc(uuid, jsonb) from public, anon, authenticated;
+grant execute on function public.update_amc(uuid, jsonb) to service_role;
+
+-- ---------------------------------------------------------------------------
 -- Seed data: only the values shown in the design screenshots, plus the
 -- platform list from the project sheet. Add rows when the full lists are
 -- confirmed.
@@ -362,38 +513,93 @@ insert into plans (name, sort_order) values
 on conflict (name) do nothing;
 
 insert into critical_response_times (name, sort_order) values
-  ('4 hours', 1)
+  ('4 hours', 1), ('8 hours', 2)
 on conflict (name) do nothing;
 
 insert into normal_response_times (name, sort_order) values
-  ('2 working days', 1)
+  ('Weekdays, Saturdays', 1), ('Only weekdays', 2)
 on conflict (name) do nothing;
+
+-- Which Normal response options each plan allows (form filters by plan).
+create table if not exists public.plan_normal_responses (
+  plan            text not null references public.plans (name) on update cascade on delete cascade,
+  normal_response text not null references public.normal_response_times (name) on update cascade on delete cascade,
+  primary key (plan, normal_response)
+);
+
+insert into public.plan_normal_responses (plan, normal_response) values
+  ('Plan A', 'Weekdays, Saturdays'),
+  ('Plan B', 'Weekdays, Saturdays'),
+  ('Plan C', 'Only weekdays')
+on conflict do nothing;
+
+alter table public.plan_normal_responses enable row level security;
 
 insert into gst_rates (rate, sort_order) values
   (18, 1)
 on conflict (rate) do nothing;
 
 insert into billing_cycles (name, sort_order) values
-  ('Quarterly', 1)
+  ('Monthly', 1), ('Yearly', 2)
 on conflict (name) do nothing;
 
-insert into scope_items (name, sort_order) values
-  ('Core & plugin updates', 1),
-  ('Daily backups',         2),
-  ('Security monitoring',   3),
-  ('Uptime monitoring',     4),
-  ('Bug fixes',             5),
-  ('Content updates',       6),
-  ('Monthly client report', 7),
-  ('Speed optimisation',    8)
+insert into renewal_increase_rates (pct, sort_order) values
+  (5, 1), (10, 2)
+on conflict (pct) do nothing;
+
+insert into out_of_scope_rates (rate, sort_order) values
+  (500, 1), (1000, 2), (1500, 3)
+on conflict (rate) do nothing;
+
+insert into public.scope_frequencies (name, sort_order) values
+  ('Half Yearly Once', 1), ('Monthly Once', 2), ('Quarterly Once', 3)
 on conflict (name) do nothing;
+
+insert into public.scope_categories (name, sort_order) values
+  ('Technical Maintenance', 1), ('Content Update', 2), ('Support & Consultation', 3), ('SEO Updates', 4)
+on conflict (name) do nothing;
+
+insert into public.scope_items (name, frequency, sort_order) values
+  ('Malware Scanning',                              'Half Yearly Once',  1),
+  ('Plugin / Version Update (if any)',              'Half Yearly Once',  2),
+  ('Bug Fixes (due to plugin / version update)',    'Half Yearly Once',  3),
+  ('Functionality Audit',                           'Half Yearly Once',  4),
+  ('Scheduled Backups',                             'Half Yearly Once',  5),
+  ('Website Speed Check',                           'Half Yearly Once',  6),
+  ('Page Speed Improvement',                        'Half Yearly Once',  7),
+  ('Hosting / Server Up-to-date Check',             'Half Yearly Once',  8),
+  ('Active SSL Certificate Check',                  'Half Yearly Once',  9),
+  ('Uptime Monitoring Report',                      'Monthly Once',     10),
+  ('Recommendations',                               'Half Yearly Once', 11),
+  ('Content Updates',                               'Monthly Once',     12),
+  ('Image / Video Updates',                         'Monthly Once',     13),
+  ('Banner Image Updates',                          'Monthly Once',     14),
+  ('New Article Updates & Formatting Optimisation', 'Monthly Once',     15),
+  ('Blog Content Update',                           'Monthly Once',     16),
+  ('Performance Review Discussion',                 'Quarterly Once',   17),
+  ('Strategy Calls for Improvements',               'Quarterly Once',   18),
+  ('Meta Tags & Alt Text Updates',                  'Quarterly Once',   22),
+  ('Internal Linking Updates',                      'Quarterly Once',   23),
+  ('Keyword Updates on Pages',                      'Quarterly Once',   24),
+  ('SEO Reports',                                   'Quarterly Once',   25),
+  ('SEO Recommendations',                           'Quarterly Once',   26)
+on conflict (name) do nothing;
+
+update public.scope_items set category = 'Technical Maintenance'
+where sort_order between 1 and 11;
+update public.scope_items set category = 'Content Update'
+where sort_order between 12 and 16;
+update public.scope_items set category = 'Support & Consultation'
+where sort_order between 17 and 18;
+update public.scope_items set category = 'SEO Updates'
+where sort_order between 22 and 26;
 
 insert into asset_types (name, sort_order) values
   ('Domain', 1), ('Hosting', 2), ('SSL', 3), ('License', 4)
 on conflict (name) do nothing;
 
 insert into parties (name, sort_order) values
-  ('Client', 1), ('Agency', 2)
+  ('Client', 1), ('Venzo / kytz', 2)
 on conflict (name) do nothing;
 
 insert into account_types (name, sort_order) values

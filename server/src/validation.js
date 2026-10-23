@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CONTENT_UPDATES, valuesOf } from './options.js';
+import { CONTENT_UPDATES, allowedNormalResponses, valuesOf } from './options.js';
 
 const GSTIN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const PHONE = /^[+0-9 ()-]{7,20}$/;
@@ -67,14 +67,21 @@ export function buildAmcSchema(options) {
         .nonnegative('Annual fee cannot be negative'),
       gst_rate: pickNumber('gstRate', 'a GST rate'),
       billing_cycle: pick('billingCycle', 'a billing cycle'),
-      renewal_increase_pct: optionalNumber(z.number().min(0).max(100, 'Must be 100 or less')),
-      out_of_scope_rate: optionalNumber(z.number().nonnegative('Rate cannot be negative')),
+      renewal_increase_pct: optionalNumber(pickNumber('renewalIncrease', 'a renewal increase')),
+      out_of_scope_rate: optionalNumber(pickNumber('outOfScopeRate', 'an out-of-scope rate')),
       zoho_recurring: z.boolean(),
       password_rotation_months: optionalNumber(pickNumber('rotationMonths', 'a rotation period')),
       reminder_days: uniqueList(pickNumber('reminderDays', 'a reminder')),
       notify_client: z.boolean(),
       reminder_channels: uniqueList(pick('channel', 'a channel')),
     })
+    .refine(
+      (c) => {
+        const allowed = allowedNormalResponses(options, c.plan);
+        return !allowed || allowed.includes(c.normal_response);
+      },
+      { path: ['normal_response'], message: 'Not available on the selected plan' },
+    )
     .refine((c) => c.end_date > c.start_date, {
       path: ['end_date'],
       message: 'End date must be after the start date',
@@ -93,8 +100,9 @@ export function buildAmcSchema(options) {
   const assetSchema = z.object({
     type: pick('assetType', 'a type'),
     provider: optionalText(),
-    owned_by: pick('party', 'who owns it'),
-    expiry_date: isoDate('Expiry'),
+    // Optional: e.g. hosting recorded with only its provider.
+    owned_by: z.preprocess(emptyToNull, pick('party', 'who owns it').nullable()),
+    expiry_date: z.preprocess(emptyToNull, isoDate('Expiry').nullable()),
     auto_renew: z.boolean(),
   });
 

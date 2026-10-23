@@ -20,15 +20,61 @@ const TYPE_LABELS = {
   SSL: 'SSL certificate',
 };
 
-function AutoRenew({ value }) {
-  if (value === null) return <span className="muted">—</span>;
-  return value ? 'On' : 'Off';
+/** On / Off for the item; AMC rows show their website's domain setting, labelled. */
+function AutoRenew({ item }) {
+  if (item.kind === 'AMC') {
+    if (item.domainAutoRenew == null) return <span className="muted">—</span>;
+    return (
+      <>
+        {item.domainAutoRenew ? 'On' : 'Off'}
+        <div className="cell-sub">Domain</div>
+      </>
+    );
+  }
+  if (item.autoRenew === null) return <span className="muted">—</span>;
+  return item.autoRenew ? 'On' : 'Off';
+}
+
+const autoRenewText = (item) => {
+  const value = item.kind === 'AMC' ? item.domainAutoRenew : item.autoRenew;
+  return value == null ? null : value ? 'On' : 'Off';
+};
+
+const COMING_SOON = 'Coming soon';
+
+/**
+ * Row action, as in the design: an AMC gets "Send quote", an item that won't
+ * renew by itself gets "Renew", anything else "View". Send quote and Renew
+ * are placeholders until the renewal workflow exists.
+ */
+function RowAction({ item, onView }) {
+  if (item.kind === 'AMC') {
+    return (
+      <button type="button" className="btn btn-secondary btn-sm" disabled title={COMING_SOON}>
+        Send quote
+      </button>
+    );
+  }
+  if (!item.autoRenew) {
+    return (
+      <button type="button" className="btn btn-secondary btn-sm" disabled title={COMING_SOON}>
+        Renew
+      </button>
+    );
+  }
+  return (
+    <button type="button" className="btn btn-secondary btn-sm" onClick={onView}>
+      View
+    </button>
+  );
 }
 
 const PAGE_SIZE = 5;
 
 export default function ExpiryTable({ items, search }) {
   const [filter, setFilter] = useState('all');
+  // "All" lists the AMCs themselves, which have no auto-renew of their own.
+  const showAutoRenew = filter !== 'all';
   const [page, setPage] = useState(1);
   const navigate = useNavigate();
 
@@ -39,7 +85,9 @@ export default function ExpiryTable({ items, search }) {
   const visible = useMemo(
     () =>
       searchRows(
-        items.filter((item) => filter === 'all' || item.kind === filter),
+        // "All" lists the AMCs themselves (one row per project); the other
+        // chips show that type's expiries (domains, hosting, …).
+        items.filter((item) => item.kind === (filter === 'all' ? 'AMC' : filter)),
         (item) => [
           item.site,
           item.url,
@@ -49,7 +97,7 @@ export default function ExpiryTable({ items, search }) {
           formatDate(item.expiry),
           item.expiry,
           daysLeftText(item.daysLeft),
-          item.autoRenew === null ? null : item.autoRenew ? 'On' : 'Off',
+          autoRenewText(item),
         ],
         search,
       ),
@@ -93,7 +141,8 @@ export default function ExpiryTable({ items, search }) {
                 <th>Client</th>
                 <th>Expires</th>
                 <th>Left</th>
-                <th>Auto-renew</th>
+                {showAutoRenew && <th>Auto-renew</th>}
+                <th aria-label="Action" />
               </tr>
             </thead>
             <tbody>
@@ -114,8 +163,13 @@ export default function ExpiryTable({ items, search }) {
                   <td>
                     <DaysLeft value={item.daysLeft} />
                   </td>
-                  <td>
-                    <AutoRenew value={item.autoRenew} />
+                  {showAutoRenew && (
+                    <td>
+                      <AutoRenew item={item} />
+                    </td>
+                  )}
+                  <td className="cell-action" onClick={(e) => e.stopPropagation()}>
+                    <RowAction item={item} onView={() => navigate(`/sites/${item.siteId}`)} />
                   </td>
                 </tr>
               ))}
@@ -130,7 +184,6 @@ export default function ExpiryTable({ items, search }) {
         total={visible.length}
         onChange={setPage}
         label="Expiries pages"
-      />
-    </section>
+      />    </section>
   );
 }

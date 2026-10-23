@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useState } from 'react';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { formatDate, formatRupees } from '../lib/format.js';
 import DaysLeft from '../components/DaysLeft.jsx';
 import { DetailSkeleton } from '../components/Skeleton.jsx';
+import Snackbar from '../components/Snackbar.jsx';
 
 const CONTENT_UPDATES = 'Content updates';
 const COMING_SOON = 'Coming soon';
@@ -132,15 +133,27 @@ function ContractCard({ siteId, contract }) {
       </dl>
 
       <p className="detail-label">Scope</p>
-      {contract.scope.length || contract.exclusions ? (
-        <ul className="tags">
-          {contract.scope.map((item) => (
-            <li key={item} className="tag">
-              {scopeLabel(item, contract)}
-            </li>
+      {contract.scopeGroups.length || contract.exclusions ? (
+        <div className="scope-groups">
+          {/* Grouped by frequency: "Half Yearly Once" → its items, … */}
+          {contract.scopeGroups.map((group) => (
+            <div key={group.frequency ?? 'other'}>
+              {group.frequency && <p className="scope-group-name">{group.frequency}</p>}
+              <ul className="tags">
+                {group.items.map((item) => (
+                  <li key={item} className="tag">
+                    {scopeLabel(item, contract)}
+                  </li>
+                ))}
+              </ul>
+            </div>
           ))}
-          {contract.exclusions && <li className="tag tag-muted">Excluded: {contract.exclusions}</li>}
-        </ul>
+          {contract.exclusions && (
+            <ul className="tags">
+              <li className="tag tag-muted">Excluded: {contract.exclusions}</li>
+            </ul>
+          )}
+        </div>
       ) : (
         <p className="muted">Nothing selected</p>
       )}
@@ -267,9 +280,9 @@ function AssetsCard({ assets }) {
                 <tr key={asset.id}>
                   <td>{asset.asset_type}</td>
                   <td>{asset.provider ?? <Empty />}</td>
-                  <td>{asset.owned_by}</td>
+                  <td>{asset.owned_by ?? <Empty />}</td>
                   <td>
-                    <ExpiryDate date={asset.expiry_date} daysLeft={asset.daysLeft} />
+                    {asset.expiry_date ? <ExpiryDate date={asset.expiry_date} daysLeft={asset.daysLeft} /> : <Empty />}
                   </td>
                   <td>{asset.auto_renew ? 'On' : 'Off'}</td>
                 </tr>
@@ -376,8 +389,16 @@ export default function SiteDetail() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const location = useLocation();
+  const navigate = useNavigate();
+  // "AMC updated." after an edit; cleared from history so a refresh doesn't repeat it.
+  const [flash, setFlash] = useState(location.state?.flash ?? null);
+  const closeFlash = useCallback(() => setFlash(null), []);
+  useEffect(() => {
+    if (location.state?.flash) navigate(location.pathname + location.search, { replace: true, state: null });
+  }, [location, navigate]);
 
-  const tab = TABS.some((t) => t.id === searchParams.get('tab')) ? searchParams.get('tab') : 'overview';
+  const tab =TABS.some((t) => t.id === searchParams.get('tab')) ? searchParams.get('tab') : 'overview';
   const selectTab = (next) =>
     setSearchParams(next === 'overview' ? {} : { tab: next }, { replace: true });
 
@@ -456,8 +477,8 @@ export default function SiteDetail() {
             {contact && ` · Contact: ${contact}`}
           </p>
         </div>
-        {/* Placeholders until work logging, reports and the renewal workflow exist. */}
         <div className="detail-actions">
+          {/* Placeholders until work logging, reports and the renewal workflow exist. */}
           <button type="button" className="btn btn-secondary" disabled title={COMING_SOON}>
             Log work
           </button>
@@ -467,8 +488,15 @@ export default function SiteDetail() {
           <button type="button" className="btn btn-primary" disabled title={COMING_SOON}>
             Start renewal
           </button>
+          {contract && (
+            <Link to={`/amcs/${contract.id}/edit`} className="btn btn-primary">
+              Edit AMC
+            </Link>
+          )}
         </div>
       </header>
+
+      <Snackbar message={flash} onClose={closeFlash} />
 
       <div className="tabs" role="tablist" aria-label="Website sections">
         {TABS.map((t) => (

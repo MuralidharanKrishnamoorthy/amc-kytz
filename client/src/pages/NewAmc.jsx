@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../lib/api.js';
-import { Checkbox, Field, RowErrors, Select, TextInput } from '../components/FormControls.jsx';
+import { Checkbox, Field, GroupCheckbox, RowErrors, Select, TextInput } from '../components/FormControls.jsx';
+import { groupByCategory, groupByFrequency } from '../lib/scope.js';
 import { FormSkeleton } from '../components/Skeleton.jsx';
 import Spinner from '../components/Spinner.jsx';
 
@@ -88,7 +89,66 @@ function rowErrors(errors, prefix, index) {
   return Object.fromEntries(Object.entries(errors).filter(([key]) => key.startsWith(start)));
 }
 
-function FormHeader() {
+const asText = (value) => (value === null || value === undefined ? '' : String(value));
+
+/**
+ * Turns a saved AMC (GET /api/amcs/:id) into form state. List values that are
+ * no longer offered (e.g. a removed scope item) are dropped so they don't fail
+ * validation invisibly; single values are kept so the field shows an error.
+ */
+function toFormState(amc, options) {
+  const known = (key, list) => list.filter((v) => options[key].some((o) => o.value === v));
+  const k = amc.contract;
+  return {
+    client: Object.fromEntries(Object.keys(emptyClient).map((f) => [f, asText(amc.client[f])])),
+    contract: {
+      ...Object.fromEntries(Object.keys(emptyContract).map((f) => [f, asText(k[f])])),
+      scope: known('scope', k.scope),
+      reminder_days: known('reminderDays', k.reminder_days),
+      reminder_channels: known('channel', k.reminder_channels),
+      zoho_recurring: Boolean(k.zoho_recurring),
+      notify_client: Boolean(k.notify_client),
+    },
+    assets: amc.assets.length
+      ? amc.assets.map((a) => ({
+          key: crypto.randomUUID(),
+          type: asText(a.type),
+          provider: asText(a.provider),
+          owned_by: asText(a.owned_by),
+          expiry_date: asText(a.expiry_date),
+          auto_renew: Boolean(a.auto_renew),
+        }))
+      : rows(INITIAL_ASSET_ROWS, newAsset),
+    accessRefs: amc.access_refs.length
+      ? amc.access_refs.map((r) => ({
+          key: crypto.randomUUID(),
+          account: asText(r.account),
+          login: asText(r.login),
+          vault_url: asText(r.vault_url),
+          two_fa_held_by: asText(r.two_fa_held_by),
+        }))
+      : rows(INITIAL_ACCESS_ROWS, newAccessRef),
+  };
+}
+
+function FormHeader({ editing }) {
+  if (editing) {
+    return (
+      <>
+        <nav className="breadcrumb" aria-label="Breadcrumb">
+          <Link to="/">Dashboard</Link> / <Link to="/clients">Clients &amp; sites</Link>
+          {editing.siteId && (
+            <>
+              {' '}/ <Link to={`/sites/${editing.siteId}`}>{editing.clientName}</Link>
+            </>
+          )}{' '}
+          / <span>Edit AMC</span>
+        </nav>
+        <h1>Edit AMC</h1>
+        <p className="muted">Change any detail of this AMC. Nothing is saved until you click Save changes.</p>
+      </>
+    );
+  }
   return (
     <>
       <nav className="breadcrumb" aria-label="Breadcrumb">
@@ -100,9 +160,22 @@ function FormHeader() {
   );
 }
 
-export default function NewAmc() {
+/**
+ * New AMC (/amcs/new) and Edit AMC (/amcs/:id/edit) share this form. Keyed by
+ * the id so switching between them always starts from fresh state.
+ */
+export default function AmcFormPage() {
+  const { id } = useParams();
+  return <AmcForm key={id ?? 'new'} editId={id ?? null} />;
+}
+
+function AmcForm({ editId }) {
   const navigate = useNavigate();
   const formRef = useRef(null);
+  // Edit mode: { siteId, clientName, hasAgreement } once the AMC has loaded.
+  const [editing, setEditing] = useState(null);
+  // Edit mode: the user chose to remove the saved signed agreement.
+  const [removeSavedAgreement, setRemoveSavedAgreement] = useState(false);
 
   const [options, setOptions] = useState(null);
   const [loadError, setLoadError] = useState(null);
@@ -112,21 +185,59 @@ export default function NewAmc() {
   const [assets, setAssets] = useState(() => rows(INITIAL_ASSET_ROWS, newAsset));
   const [accessRefs, setAccessRefs] = useState(() => rows(INITIAL_ACCESS_ROWS, newAccessRef));
   const [agreement, setAgreement] = useState(null);
+  // Section filter chosen inside each frequency dropdown ('all' when unset).
+  const [scopeCategoryFilter, setScopeCategoryFilter] = useState({});
+  const setScopeCategory = (frequency, category) =>
+    setScopeCategoryFilter((current) => ({ ...current, [frequency]: category }));
+
+  // Scope frequency dropdowns that are open (all closed to start).
+  const [openScope, setOpenScope] = useState(() => new Set());
+  const toggleScopeGroup = (frequency) =>
+    setOpenScope((open) => {
+      const next = new Set(open);
+      if (next.has(frequency)) next.delete(frequency);
+      else next.add(frequency);
+      return next;
+    });
+  const agreementInput = useRef(null);
+
+  // Clears the chosen file (the browser input keeps its own value, so reset it too).
+  const removeAgreement = () => {
+    setAgreement(null);
+    clearError('agreement');
+    if (agreementInput.current) agreementInput.current.value = '';
+  };
 
   const [errors, setErrors] = useState({});
   const [formError, setFormError] = useState(null);
   const [saving, setSaving] = useState(false);
 
+  // Load the dropdown options and, when editing, the saved AMC; the form shows
+  // once both are in so it never flashes empty fields.
   useEffect(() => {
     const controller = new AbortController();
-    api
-      .getOptions(controller.signal)
-      .then(setOptions)
+    Promise.all([api.getOptions(controller.signal), editId ? api.getAmc(editId, controller.signal) : null])
+      .then(([opts, amc]) => {
+        if (amc) {
+          const form = toFormState(amc, opts);
+          setClient(form.client);
+          setContract(form.contract);
+          setAssets(form.assets);
+          setAccessRefs(form.accessRefs);
+          setEditing({ siteId: amc.siteId, clientName: amc.client.name, hasAgreement: amc.hasAgreement });
+          // Open the scope dropdowns that have ticked items.
+          setOpenScope(
+            new Set(opts.scope.filter((o) => form.contract.scope.includes(o.value)).map((o) => o.frequency).filter(Boolean)),
+          );
+        }
+        setOptions(opts);
+      })
       .catch((err) => {
-        if (err.name !== 'AbortError') setLoadError(err.message);
+        if (err.name === 'AbortError') return;
+        setLoadError(err.status === 404 ? 'This AMC was not found.' : err.message);
       });
     return () => controller.abort();
-  }, []);
+  }, [editId]);
 
   // Move focus to the first invalid field only right after a failed save, not
   // while the user is fixing fields (which also changes `errors`).
@@ -152,6 +263,20 @@ export default function NewAmc() {
   const setContractField = (field) => (value) => {
     clearError(`contract.${field}`);
     setContract((c) => ({ ...c, [field]: value }));
+  };
+
+  // Normal response options depend on the plan (plan_normal_responses).
+  // null = no restriction configured for that plan.
+  const allowedNormal = (plan) => options?.normalResponseByPlan?.[plan] ?? null;
+
+  // Changing the plan drops a normal response the new plan doesn't allow.
+  const changePlan = (plan) => {
+    clearError('contract.plan');
+    setContract((c) => {
+      const allowed = allowedNormal(plan);
+      const keep = !allowed || allowed.includes(c.normal_response);
+      return { ...c, plan, normal_response: keep ? c.normal_response : '' };
+    });
   };
   const updateRow = (setter, prefix, index, field) => (value) => {
     clearError(`${prefix}.${index}.${field}`);
@@ -210,8 +335,13 @@ export default function NewAmc() {
 
     setSaving(true);
     try {
-      await api.createAmc(payload, agreement);
-      navigate('/', { state: { flash: `AMC created for ${client.name.trim()}.` } });
+      if (editId) {
+        const saved = await api.updateAmc(editId, payload, agreement, removeSavedAgreement);
+        navigate(`/sites/${saved.siteId}`, { state: { flash: 'AMC updated.' } });
+      } else {
+        await api.createAmc(payload, agreement);
+        navigate('/', { state: { flash: `AMC created for ${client.name.trim()}.` } });
+      }
     } catch (err) {
       setSaving(false);
       let fields = remapRowErrors(err.fields, 'assets', assetIndexMap);
@@ -232,7 +362,7 @@ export default function NewAmc() {
   if (!options) {
     return (
       <div className="amc-form">
-        <FormHeader />
+        <FormHeader editing={editId ? {} : null} />
         <FormSkeleton />
       </div>
     );
@@ -240,9 +370,52 @@ export default function NewAmc() {
 
   const contentUpdatesOn = contract.scope.includes(CONTENT_UPDATES);
 
+  const toggleScope = (value) => (on) => setContract((c) => ({ ...c, scope: toggle(c.scope, value, on) }));
+
+  // One scope checkbox. A "Content updates" item also carries a per-month count.
+  const renderScopeItem = (item) =>
+    item.value === CONTENT_UPDATES ? (
+      <Checkbox
+        key={item.value}
+        label="Content updates (per month:"
+        checked={contentUpdatesOn}
+        onChange={(on) => {
+          if (!on) clearError('contract.content_updates_per_month');
+          toggleScope(item.value)(on);
+        }}
+      >
+        <input
+          className="input input-inline"
+          type="number"
+          min="0"
+          step="1"
+          aria-label="Content updates per month"
+          aria-invalid={Boolean(errors['contract.content_updates_per_month'])}
+          disabled={!contentUpdatesOn}
+          value={contract.content_updates_per_month}
+          onChange={(e) => setContractField('content_updates_per_month')(e.target.value)}
+        />
+        <span>)</span>
+      </Checkbox>
+    ) : (
+      <Checkbox
+        key={item.value}
+        label={item.label}
+        checked={contract.scope.includes(item.value)}
+        onChange={toggleScope(item.value)}
+      />
+    );
+
+  // Locked until a plan is picked, when plan rules exist; then only that plan's options.
+  const normalResponseLocked = Boolean(options.normalResponseByPlan) && !contract.plan;
+  const planNormal = allowedNormal(contract.plan);
+  const normalResponseOptions = planNormal
+    ? options.normalResponse.filter((o) => planNormal.includes(o.value))
+    : options.normalResponse;
+
   return (
     <form ref={formRef} className="amc-form" onSubmit={handleSubmit} noValidate>
-      <FormHeader />
+      <FormHeader editing={editing} />
 
       {formError && (
         <div className="alert alert-error" role="alert">
@@ -281,7 +454,9 @@ export default function NewAmc() {
         <legend>2 · Contract, scope &amp; SLA</legend>
         <div className="grid grid-4">
           <Field label="Plan" error={errors['contract.plan']}>
-            {(id, d) => <Select {...contractInput('plan')(id, d)} options={options.plan} placeholder="Select plan" />}
+            {(id, d) => (
+              <Select {...contractInput('plan')(id, d)} onChange={changePlan} options={options.plan} placeholder="Select plan" />
+            )}
           </Field>
           <Field label="Start date" error={errors['contract.start_date']}>
             {(id, d) => <TextInput {...contractInput('start_date')(id, d)} type="date" />}
@@ -298,46 +473,96 @@ export default function NewAmc() {
             {(id, d) => <Select {...contractInput('critical_response')(id, d)} options={options.criticalResponse} placeholder="Select critical response" />}
           </Field>
           <Field label="Normal response" error={errors['contract.normal_response']}>
-            {(id, d) => <Select {...contractInput('normal_response')(id, d)} options={options.normalResponse} placeholder="Select normal response" />}
+            {(id, d) => (
+              <Select
+                {...contractInput('normal_response')(id, d)}
+                options={normalResponseOptions}
+                disabled={normalResponseLocked}
+                placeholder={normalResponseLocked ? 'Select a plan first' : 'Select normal response'}
+              />
+            )}
           </Field>
         </div>
 
         <p className="group-label">Included in scope</p>
-        <div className="check-grid">
-          {options.scope.map((item) =>
-            item.value === CONTENT_UPDATES ? (
-              <Checkbox
-                key={item.value}
-                label="Content updates (per month:"
-                checked={contentUpdatesOn}
-                onChange={(on) => {
-                  if (!on) clearError('contract.content_updates_per_month');
-                  setContract((c) => ({ ...c, scope: toggle(c.scope, item.value, on) }));
-                }}
-              >
-                <input
-                  className="input input-inline"
-                  type="number"
-                  min="0"
-                  step="1"
-                  aria-label="Content updates per month"
-                  aria-invalid={Boolean(errors['contract.content_updates_per_month'])}
-                  disabled={!contentUpdatesOn}
-                  value={contract.content_updates_per_month}
-                  onChange={(e) => setContractField('content_updates_per_month')(e.target.value)}
+        {groupByFrequency(options.scope, options.scopeFrequencies).map((group) => {
+          const values = group.items.map((item) => item.value);
+          const selected = values.filter((v) => contract.scope.includes(v)).length;
+          // Items without a frequency (before the migration) are shown as a plain list.
+          if (!group.frequency) {
+            return (
+              <div key="other" className="scope-group">
+                <div className="check-grid">{group.items.map(renderScopeItem)}</div>
+              </div>
+            );
+          }
+          const open = openScope.has(group.frequency);
+          const bodyId = `scope-${group.frequency.replace(/\W+/g, '-').toLowerCase()}`;
+          return (
+            <div key={group.frequency} className="scope-group">
+              <div className="scope-head">
+                <button
+                  type="button"
+                  className={`scope-toggle${open ? ' scope-toggle-open' : ''}`}
+                  aria-expanded={open}
+                  aria-controls={bodyId}
+                  aria-label={`${open ? 'Hide' : 'Show'} ${group.frequency} items`}
+                  onClick={() => toggleScopeGroup(group.frequency)}
+                >
+                  ▸
+                </button>
+                <GroupCheckbox
+                  label={group.frequency}
+                  selected={selected}
+                  total={values.length}
+                  onChange={(on) =>
+                    setContract((c) => ({
+                      ...c,
+                      scope: on
+                        ? [...new Set([...c.scope, ...values])]
+                        : c.scope.filter((v) => !values.includes(v)),
+                    }))
+                  }
                 />
-                <span>)</span>
-              </Checkbox>
-            ) : (
-              <Checkbox
-                key={item.value}
-                label={item.label}
-                checked={contract.scope.includes(item.value)}
-                onChange={(on) => setContract((c) => ({ ...c, scope: toggle(c.scope, item.value, on) }))}
-              />
-            ),
-          )}
-        </div>
+              </div>
+              {open &&
+                (() => {
+                  const categories = groupByCategory(group.items, options.scopeCategories);
+                  const named = categories.filter((cat) => cat.category);
+                  const active = scopeCategoryFilter[group.frequency] ?? 'all';
+                  const shown = active === 'all' ? categories : categories.filter((cat) => cat.category === active);
+                  return (
+                    <div id={bodyId} className="scope-body">
+                      {/* Excel sections inside this frequency, e.g. "Technical Maintenance". */}
+                      {named.length > 0 && (
+                        <div className="chips scope-chips" role="group" aria-label={`Filter ${group.frequency} by section`}>
+                          {[{ category: 'all', label: 'All' }, ...named.map((c) => ({ category: c.category, label: c.category }))].map(
+                            (chip) => (
+                              <button
+                                key={chip.category}
+                                type="button"
+                                className={`chip chip-sm${active === chip.category ? ' chip-active' : ''}`}
+                                aria-pressed={active === chip.category}
+                                onClick={() => setScopeCategory(group.frequency, chip.category)}
+                              >
+                                {chip.label}
+                              </button>
+                            ),
+                          )}
+                        </div>
+                      )}
+                      {shown.map((cat) => (
+                        <div key={cat.category ?? 'other'} className="scope-category">
+                          {cat.category && <p className="scope-category-name">{cat.category}</p>}
+                          <div className="check-grid">{cat.items.map(renderScopeItem)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+            </div>
+          );
+        })}
         {errors['contract.content_updates_per_month'] && (
           <p className="field-error">{errors['contract.content_updates_per_month']}</p>
         )}
@@ -359,16 +584,52 @@ export default function NewAmc() {
 
         <Field label="Signed agreement" error={errors.agreement}>
           {(id, d) => (
-            <input
-              id={id}
-              type="file"
-              accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
-              aria-describedby={d}
-              aria-invalid={Boolean(errors.agreement)}
-              onChange={(e) => setAgreement(e.target.files?.[0] ?? null)}
-            />
+            <div className="file-row">
+              <input
+                ref={agreementInput}
+                id={id}
+                type="file"
+                accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
+                aria-describedby={d}
+                aria-invalid={Boolean(errors.agreement)}
+                onChange={(e) => {
+                  clearError('agreement');
+                  setAgreement(e.target.files?.[0] ?? null);
+                }}
+              />
+              {agreement && (
+                <button type="button" className="btn btn-secondary btn-sm" onClick={removeAgreement}>
+                  Remove
+                </button>
+              )}
+            </div>
           )}
         </Field>
+        {/* Edit mode: the agreement already saved on this AMC. */}
+        {editing?.hasAgreement && (
+          <p className="saved-file small">
+            {agreement ? (
+              <span className="muted">The saved agreement will be replaced by the file chosen above.</span>
+            ) : removeSavedAgreement ? (
+              <>
+                <span className="muted">The saved agreement will be removed when you save.</span>
+                <button type="button" className="link-button" onClick={() => setRemoveSavedAgreement(false)}>
+                  Undo
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="muted">Saved agreement:</span>
+                <a href={api.agreementUrl(editing.siteId, editId)} target="_blank" rel="noopener noreferrer">
+                  View
+                </a>
+                <button type="button" className="link-button" onClick={() => setRemoveSavedAgreement(true)}>
+                  Remove
+                </button>
+              </>
+            )}
+          </p>
+        )}
       </fieldset>
 
       <fieldset className="card section">
@@ -385,11 +646,21 @@ export default function NewAmc() {
           </Field>
           <Field label="Renewal increase (%)" error={errors['contract.renewal_increase_pct']}>
             {(id, d) => (
-              <TextInput {...contractInput('renewal_increase_pct')(id, d)} type="number" min="0" max="100" step="0.5" />
+              <Select
+                {...contractInput('renewal_increase_pct')(id, d)}
+                options={options.renewalIncrease}
+                placeholder="Select renewal increase"
+              />
             )}
           </Field>
           <Field label="Out-of-scope rate (₹ / hour)" error={errors['contract.out_of_scope_rate']}>
-            {(id, d) => <TextInput {...contractInput('out_of_scope_rate')(id, d)} type="number" min="0" step="1" />}
+            {(id, d) => (
+              <Select
+                {...contractInput('out_of_scope_rate')(id, d)}
+                options={options.outOfScopeRate}
+                placeholder="Select out-of-scope rate"
+              />
+            )}
           </Field>
         </div>
         <div className="check-row billing-zoho">
@@ -567,7 +838,7 @@ export default function NewAmc() {
       </fieldset>
 
       <div className="form-actions">
-        <Link to="/" className="btn btn-secondary">
+        <Link to={editing?.siteId ? `/sites/${editing.siteId}` : '/'} className="btn btn-secondary">
           Cancel
         </Link>
         <button type="submit" className="btn btn-primary" disabled={saving}>
@@ -576,7 +847,7 @@ export default function NewAmc() {
               <Spinner /> Saving
             </>
           ) : (
-            'Save AMC'
+            editId ? 'Save changes' : 'Save AMC'
           )}
         </button>
       </div>

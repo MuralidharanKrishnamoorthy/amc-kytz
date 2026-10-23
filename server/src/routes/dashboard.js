@@ -31,6 +31,12 @@ function toItems(sites, todayIso) {
       client: site.client?.name ?? '—',
     };
 
+    // A contract has no auto-renew of its own; its row shows the website's
+    // domain auto-renew instead (soonest-expiring domain if there are several).
+    const domain = site.assets
+      .filter((a) => a.asset_type === 'Domain')
+      .sort((a, b) => (a.expiry_date ?? '9999').localeCompare(b.expiry_date ?? '9999'))[0];
+
     for (const contract of site.contracts) {
       items.push({
         ...base,
@@ -40,10 +46,13 @@ function toItems(sites, todayIso) {
         expiry: contract.end_date,
         daysLeft: daysBetween(todayIso, contract.end_date),
         autoRenew: null,
+        domainAutoRenew: domain ? domain.auto_renew : null,
       });
     }
 
-    for (const asset of site.assets) {
+    // Assets without an expiry date (e.g. hosting known only by its provider)
+    // have nothing to count down to.
+    for (const asset of site.assets.filter((a) => a.expiry_date)) {
       items.push({
         ...base,
         id: `asset:${asset.id}`,
